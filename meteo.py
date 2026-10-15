@@ -34,7 +34,7 @@ SERIES_FRED = {
     "CPIAUCSL": "Indice des prix à la consommation (US)",
     "GDP": "PIB nominal US",
     "GDPC1": "PIB réel US",
-    "USALOLITONOSTSAM": "Indicateur avancé OCDE (US)",
+    "USALOLITOAASTSAM": "Indicateur avancé OCDE (US)",
 }
 # Séries Yahoo Finance.
 SERIES_YAHOO = {
@@ -45,7 +45,7 @@ SERIES_YAHOO = {
 }
 # Délai de publication approximatif (jours) appliqué à chaque série.
 DELAIS = {"T10Y3M": 1, "DGS10": 1, "BAA10Y": 1, "BAA": 31, "CPIAUCSL": 45,
-          "GDP": 120, "GDPC1": 120, "USALOLITONOSTSAM": 75,
+          "GDP": 120, "GDPC1": 120, "USALOLITOAASTSAM": 75,
           "SP500": 0, "GOLD": 0, "WTI": 0, "VIX": 0}
 
 
@@ -210,8 +210,8 @@ def construire(brut: dict, debut: str = "1995-01-01") -> tuple[pd.DataFrame, pd.
     v["vix"] = A("VIX")
 
     # 8. OCDE
-    cli = g("USALOLITONOSTSAM")
-    v["oecd"] = A("USALOLITONOSTSAM", cli.diff(12) if cli is not None else None)
+    cli = g("USALOLITOAASTSAM")
+    v["oecd"] = A("USALOLITOAASTSAM", cli.diff(12) if cli is not None else None)
 
     # Pour les 4 cadrans : accélération de l'inflation (glissement annuel − celui d'il y a 6 mois)
     if g("CPIAUCSL") is not None:
@@ -229,7 +229,7 @@ def construire(brut: dict, debut: str = "1995-01-01") -> tuple[pd.DataFrame, pd.
     sources = {"courbe": ["T10Y3M"], "wicksell": ["BAA", "CPIAUCSL", "GDPC1"],
                "allais": ["GDP", "DGS10"], "actions_or": ["SP500", "GOLD"],
                "petrole_or": ["WTI", "GOLD"], "credit": ["BAA10Y"], "vix": ["VIX"],
-               "oecd": ["USALOLITONOSTSAM"]}
+               "oecd": ["USALOLITOAASTSAM"]}
     derniere = {}
     for k, codes in sources.items():
         dates = [g(c).dropna().index.max() for c in codes if g(c) is not None and len(g(c).dropna())]
