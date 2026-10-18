@@ -32,7 +32,11 @@ et un backtest qui vérifie si le voyant rouge annonce vraiment une baisse.
 - 🟢 **Dans le canal** · 🔵 **Bas du canal**.
 - **z** = écart du prix à la droite, en écarts-types.
 - Sur le graphique en bougies : ▼ rouge = vente, ▲ vert = rachat (une seule vente par épisode).
-- Deux façons de vendre, à comparer dans la barre latérale : **dès le franchissement** de la
+- **Sorties progressives** (par défaut) : on allège par paliers de 25 % quand le prix monte
+  dans le haut du canal, sans descendre sous un socle de 50 %, puis on rachète un palier par
+  mois une fois le prix revenu au centre. Option : la météo du risque plafonne l'exposition.
+  La bande violette sous le graphique montre la part investie.
+- En mode « tout ou rien », deux façons de vendre, à comparer dans la barre latérale : **dès le franchissement** de la
   borne haute, ou **par confirmation** (on laisse courir tant que le prix reste au-dessus,
   on vend quand il retombe dans le canal).
 - Le tableau « après un voyant rouge » compare toujours avec la **référence** (n'importe quel

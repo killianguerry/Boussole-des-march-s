@@ -4,9 +4,10 @@ Page 1 — Boussole des ETF : canal de régression glissant, voyants et backtest
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
-from boussole import (ETFS, JOURS_PAR_AN, MODES_SORTIE, bornes, canal_glissant,
+from boussole import (ETFS, JOURS_PAR_AN, MODES_SORTIE, bornes, canal_glissant, plafond_meteo,
                       comparer_fenetres, stats_apres_signal, strategie, voyant)
 from donnees import calcul_meteo, telecharger
 import meteo as mt
@@ -36,10 +37,38 @@ periode = st.sidebar.radio("Période affichée", list(PERIODES), index=1, horizo
 unite = st.sidebar.radio("Bougies", ["Journalières", "Hebdomadaires"], horizontal=True)
 
 st.sidebar.header("🎯 Stratégie testée")
-mode_sortie = st.sidebar.radio("Vendre...", list(MODES_SORTIE),
-                               format_func=lambda m: MODES_SORTIE[m],
-                               help="« Confirmation » laisse courir la hausse tant que le prix "
-                                    "reste au-dessus du canal, et vend quand il retombe dedans.")
+type_sortie = st.sidebar.radio(
+    "Type de sortie", ["Progressive (par paliers)", "Tout ou rien"],
+    help="Progressive : on allège par étapes et on garde un socle, comme Charles Gave. "
+         "Tout ou rien : on vend tout au signal, on rachète tout au retour vers le centre.")
+progressif = None
+mode_sortie = "franchissement"
+if type_sortie.startswith("Progressive"):
+    pas_pct = st.sidebar.select_slider("Part vendue à chaque palier", [20, 25, 33, 50], value=25,
+                                       format_func=lambda v: f"{v} %")
+    expo_min_pct = st.sidebar.select_slider("Exposition minimale (socle gardé)", [0, 25, 50, 75],
+                                            value=50, format_func=lambda v: f"{v} %",
+                                            help="Gave ne descend en général pas sous 50 % d'actions.")
+    ecart = st.sidebar.select_slider("Écart entre paliers de vente (écarts-types)",
+                                     [0.25, 0.5, 0.75, 1.0], value=0.5,
+                                     help=f"Avec 0,5 et un canal à {k:g} : 1er palier à z = {k - 0.5:g}, "
+                                          f"2e à {k:g}, 3e à {k + 0.5:g}…")
+    rachat_txt = st.sidebar.radio("Rythme de rachat", ["2 semaines", "1 mois", "2 mois"], index=1,
+                                  horizontal=True,
+                                  help="Une fois le prix revenu vers le centre, on rachète un palier "
+                                       "à ce rythme jusqu'à revenir à 100 %.")
+    plafond_on = st.sidebar.checkbox(
+        "Plafond météo du risque", value=False,
+        help="La météo limite l'exposition : 2 voyants rouges → 75 % max, 3 → 50 %, 4+ → 25 %.")
+    progressif = {"pas": {33: 1 / 3}.get(pas_pct, pas_pct / 100), "expo_min": expo_min_pct / 100,
+                  "ecart_paliers": ecart,
+                  "rachat_jours": {"2 semaines": 10, "1 mois": 21, "2 mois": 42}[rachat_txt],
+                  "plafond_on": plafond_on}
+else:
+    mode_sortie = st.sidebar.radio("Vendre...", list(MODES_SORTIE),
+                                   format_func=lambda m: MODES_SORTIE[m],
+                                   help="« Confirmation » laisse courir la hausse tant que le prix "
+                                        "reste au-dessus du canal, et vend quand il retombe dedans.")
 z_rachat = st.sidebar.slider("Racheter quand le prix revient à (écarts-types)", -2.0, 1.0, 0.0, 0.25,
                              help="0 = on rachète quand le prix revient sur la droite centrale.")
 filtre_n = st.sidebar.selectbox(
@@ -66,6 +95,8 @@ with st.spinner("Calcul de la météo du risque..."):
     m_valeurs, m_etats, m_derniere, m_erreurs, m_sources = calcul_meteo()
 m_nrouges = mt.nb_rouges(m_etats)
 autorisation = (m_nrouges >= filtre_n) if filtre_n > 0 else None
+if progressif is not None:
+    progressif["plafond_meteo"] = plafond_meteo(m_nrouges) if progressif.pop("plafond_on") else None
 _dispo = m_etats.iloc[-1].notna()
 _emo, _txt = mt.meteo_globale(int(m_nrouges.iloc[-1]))
 st.markdown(f"### Météo du risque : {_emo} {_txt} — "
@@ -127,41 +158,50 @@ def graphique(r: dict, res: dict) -> go.Figure:
     if unite == "Hebdomadaires":
         b = b.resample("W-FRI").last().dropna()
 
-    fig = go.Figure()
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2],
+                        vertical_spacing=0.03)
     # Canal (bandes)
     fig.add_trace(go.Scatter(x=b.index, y=b["haute"], name="Borne haute",
                              line=dict(color="rgba(214,69,65,0.8)", width=1.5),
-                             hovertemplate="Borne haute : %{y:.2f} €<extra></extra>"))
+                             hovertemplate="Borne haute : %{y:.2f} €<extra></extra>"), row=1, col=1)
     fig.add_trace(go.Scatter(x=b.index, y=b["basse"], name="Borne basse",
                              line=dict(color="rgba(52,120,198,0.8)", width=1.5),
                              fill="tonexty", fillcolor="rgba(140,140,140,0.07)",
-                             hovertemplate="Borne basse : %{y:.2f} €<extra></extra>"))
+                             hovertemplate="Borne basse : %{y:.2f} €<extra></extra>"), row=1, col=1)
     fig.add_trace(go.Scatter(x=b.index, y=b["centre"], name="Centre",
                              line=dict(color="rgba(120,120,120,0.9)", width=1, dash="dot"),
-                             hovertemplate="Centre : %{y:.2f} €<extra></extra>"))
+                             hovertemplate="Centre : %{y:.2f} €<extra></extra>"), row=1, col=1)
     # Bougies
     fig.add_trace(go.Candlestick(x=bougies.index, open=bougies["Open"], high=bougies["High"],
                                  low=bougies["Low"], close=bougies["Close"], name="Cours",
-                                 increasing_line_color="#26a69a", decreasing_line_color="#ef5350"))
+                                 increasing_line_color="#26a69a", decreasing_line_color="#ef5350"), row=1, col=1)
 
-    # Ordres de la stratégie (une seule vente par épisode, puis un rachat)
+    # Ordres de la stratégie (taille du triangle = part du portefeuille échangée)
     if res:
-        prix = r["prix"]
-        for dates, nom, symbole, couleur, decal in [
-            (res["ventes"], "Vente", "triangle-down", "#d62728", 1.035),
-            (res["rachats"], "Rachat", "triangle-up", "#2ca02c", 0.965),
+        o = res["ordres"]
+        o = o[o["Date"] >= debut]
+        for nom, symbole, couleur, decal, col_prix in [
+            ("Vente", "triangle-down", "#d62728", 1.035, "High"),
+            ("Rachat", "triangle-up", "#2ca02c", 0.965, "Low"),
         ]:
-            d = dates[dates >= debut]
-            if len(d) == 0:
+            sel = o[o["Action"] == nom]
+            if sel.empty:
                 continue
-            haut_bas = r["ohlc"]["High"] if nom == "Vente" else r["ohlc"]["Low"]
             fig.add_trace(go.Scatter(
-                x=d, y=haut_bas.loc[d] * decal, mode="markers", name=nom,
-                marker=dict(symbol=symbole, size=13, color=couleur,
+                x=sel["Date"], y=r["ohlc"][col_prix].reindex(sel["Date"]).values * decal,
+                mode="markers", name=nom,
+                marker=dict(symbol=symbole, size=8 + 14 * sel["Part échangée"].values, color=couleur,
                             line=dict(color="white", width=1)),
-                customdata=prix.loc[d],
+                customdata=sel[["Prix", "Part échangée", "Exposition après"]].values,
                 hovertemplate=f"<b>{nom}</b> le %{{x|%d/%m/%Y}}<br>"
-                              "Clôture : %{customdata:.2f} €<extra></extra>"))
+                              "Part : %{customdata[1]:.0%} → exposition %{customdata[2]:.0%}<br>"
+                              "Clôture : %{customdata[0]:.2f} €<extra></extra>"), row=1, col=1)
+        # Exposition au marché (bande du bas)
+        expo = res["position"][res["position"].index >= debut]
+        fig.add_trace(go.Scatter(x=expo.index, y=expo, name="Exposition", line_shape="hv",
+                                 fill="tozeroy", line=dict(color="#7b61ff", width=1.5),
+                                 fillcolor="rgba(123,97,255,0.15)",
+                                 hovertemplate="Exposition : %{y:.0%}<extra></extra>"), row=2, col=1)
 
     # Axe du temps lisible
     mois = 12 * (PERIODES[periode] or len(r["ohlc"]) / JOURS_PAR_AN)
@@ -170,8 +210,10 @@ def graphique(r: dict, res: dict) -> go.Figure:
                      gridcolor="rgba(128,128,128,0.15)", rangeslider_visible=False,
                      rangebreaks=[dict(bounds=["sat", "mon"])] if unite == "Journalières" else [])
     fig.update_yaxes(type="log" if log else "linear", side="right",
-                     gridcolor="rgba(128,128,128,0.15)", ticksuffix=" €")
-    fig.update_layout(height=560, hovermode="x unified", margin=dict(t=10, l=10, r=10),
+                     gridcolor="rgba(128,128,128,0.15)", ticksuffix=" €", row=1, col=1)
+    fig.update_yaxes(range=[0, 1.05], tickformat=".0%", side="right", dtick=0.25,
+                     gridcolor="rgba(128,128,128,0.15)", title_text="Expo.", row=2, col=1)
+    fig.update_layout(height=640, hovermode="x unified", margin=dict(t=10, l=10, r=10),
                       legend=dict(orientation="h", y=-0.12))
     return fig
 
@@ -195,13 +237,17 @@ for onglet, (label, info) in zip(onglets[:-1], ETFS.items()):
             st.warning("Historique trop court pour cette fenêtre : réduis-la ou attends.")
             continue
 
-        res = strategie(canal, k, z_rachat, frais, mode_sortie, autorisation)
+        res = strategie(canal, k, z_rachat, frais, mode_sortie, autorisation, progressif)
         st.plotly_chart(graphique(r, res), width="stretch")
-        st.caption("▼ rouge = vente, ▲ vert = rachat, exécutés à la clôture du lendemain du signal. "
+        st.caption("▼ rouge = vente, ▲ vert = rachat (plus le triangle est gros, plus la part échangée "
+                   "est grande), exécutés à la clôture du lendemain du signal. En bas : la part du "
+                   "portefeuille investie. "
                    "Le canal est recalculé chaque jour avec le passé seul (pas de repaint).")
 
         # --- Stratégie complète ---
-        st.markdown("#### Stratégie : vendre en haut du canal, racheter au retour vers le centre")
+        st.markdown("#### Stratégie : alléger en haut du canal, racheter au retour vers le centre"
+                    if progressif else
+                    "#### Stratégie : vendre en haut du canal, racheter au retour vers le centre")
         if res:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Perf/an stratégie", f"{res['cagr_strat']:+.1%}",
@@ -209,12 +255,24 @@ for onglet, (label, info) in zip(onglets[:-1], ETFS.items()):
             c2.metric("Perf/an achat-conservation", f"{res['cagr_bh']:+.1%}")
             c3.metric("Pire chute stratégie", f"{res['dd_strat']:.0%}",
                       f"achat-cons. : {res['dd_bh']:.0%}", delta_color="off")
-            c4.metric("Temps investi", f"{res['temps_investi']:.0%}",
+            c4.metric("Exposition moyenne" if progressif else "Temps investi",
+                      f"{res['temps_investi']:.0%}",
                       f"{res['nb_ordres']} ordres en {res['annees']:.1f} ans", delta_color="off")
             st.line_chart(res["courbes"])
 
-            # Journal des allers-retours
-            ventes, rachats = list(res["ventes"]), list(res["rachats"])
+            if progressif:
+                o = res["ordres"].copy()
+                if not o.empty:
+                    st.markdown("**Journal des ordres**")
+                    o["Date"] = o["Date"].dt.strftime("%d/%m/%Y")
+                    st.dataframe(o.style.format({
+                        "Part échangée": "{:.0%}", "Exposition avant": "{:.0%}",
+                        "Exposition après": "{:.0%}", "Prix": "{:.2f} €"}),
+                        width="stretch", hide_index=True)
+                    st.caption("Chaque ligne = un palier. La part échangée est exprimée en "
+                               "proportion du portefeuille total.")
+            # Journal des allers-retours (tout ou rien)
+            ventes, rachats = ([], []) if progressif else (list(res["ventes"]), list(res["rachats"]))
             lignes = []
             for v in ventes:
                 apres = [a for a in rachats if a > v]
@@ -263,7 +321,7 @@ with onglets[-1]:
         if r is None:
             continue
         tab = comparer_fenetres(r["prix"], [2.0, 2.5, 3.0], k, log, z_rachat, frais, mode_sortie,
-                                autorisation)
+                                autorisation, progressif)
         st.markdown(f"**{label}**")
         if tab.empty:
             st.caption("Historique trop court.")
